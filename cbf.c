@@ -94,6 +94,7 @@
          case '.':
  #ifdef BFNET
              if (net_mode == 1 && client_fd != -1) {
+                 // Send with 0 flags. TCP_NODELAY (set in ^) handles the latency.
                  send(client_fd, interp->ptr, 1, 0);
              } else {
                  putchar(*interp->ptr);
@@ -158,7 +159,15 @@
                  listen(server_fd, 1);
                  printf("Listening on port %d...\n", port);
                  client_fd = accept(server_fd, NULL, NULL);
-                 printf("Client connected!\n");
+                 
+                 if (client_fd >= 0) {
+                     // ENABLE TCP_NODELAY
+                     // This is critical for Brainfuck which sends data byte-by-byte.
+                     // Without this, the OS buffers output, causing the "lag" you saw.
+                     int flag = 1;
+                     setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int));
+                     printf("Client connected!\n");
+                 }
              }
              break;
          }

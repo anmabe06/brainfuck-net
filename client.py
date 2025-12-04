@@ -5,6 +5,24 @@ import sys
 HOST = "127.0.0.1"
 PORT = 8000
 
+def read_until_newline(s):
+    """
+    Reads from socket 's' byte by byte until a newline is found.
+    Returns the decoded string.
+    """
+    buf = b""
+    while True:
+        try:
+            chunk = s.recv(1)
+            if not chunk:
+                return None # Connection closed
+            buf += chunk
+            if chunk == b'\n':
+                break
+        except socket.error:
+            return None
+    return buf.decode(errors='replace').strip()
+
 def main():
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -23,13 +41,14 @@ def main():
                 # Send message with newline
                 s.sendall((msg + "\n").encode())
 
-                # Receive response
-                data = s.recv(4096)
-                if not data:
+                # Receive response (read until newline)
+                response = read_until_newline(s)
+                
+                if response is None:
                     print("\nServer disconnected.")
                     break
                 
-                print(f"Server Echo: {data.decode().strip()}")
+                print(f"Server Echo: {response}")
 
     except ConnectionRefusedError:
         print(f"Error: Could not connect to {HOST}:{PORT}.")
