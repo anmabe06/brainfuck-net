@@ -1,303 +1,209 @@
 /*
- * cbf.c - A simple Brainfuck interpreter in C.
+ * cbf.c - A simple Brainfuck interpreter in C with Brainfuck-Net extension.
  *
- * This interpreter implements the standard Brainfuck language specification
- * with a tape of 30,000 cells, each holding a single byte (0-255).
+ * Brainfuck-Net Extension (compile with -DBFNET):
+ * ^ - Server Hook: Creates a TCP server.
+ * Port = [Current Cell Value] * 100. (e.g., 80 -> 8000).
+ * % - Stream Toggle: Toggles I/O mode between console (default) and network.
+ * ! - Async I/O Poll: Peeks at network socket. (Not used in this echo server)
  *
- * Usage: ./cbf <filename.bf>
+ * Usage:
+ * gcc cbf.c -o cbf -DBFNET
+ * ./cbf echo_server.bf
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <string.h>
-
-#define TAPE_SIZE 30000
-
-/* Structure to hold interpreter state */
-typedef struct {
-    uint8_t *tape;
-    uint8_t *ptr;
-    char *code;
-    long code_size;
-    long pc;
-} Interpreter;
-
-/**
- * Reads a file into memory and returns its contents.
- * Returns NULL on error.
- */
-static char *read_file(const char *filename, long *size) {
-    FILE *file = fopen(filename, "rb");
-    if (!file) {
-        perror("Error opening file");
-        return NULL;
-    }
-
-    // Determine file size
-    if (fseek(file, 0, SEEK_END) != 0) {
-        perror("Error seeking to end of file");
-        fclose(file);
-        return NULL;
-    }
-
-    *size = ftell(file);
-    if (*size < 0) {
-        perror("Error determining file size");
-        fclose(file);
-        return NULL;
-    }
-
-    if (fseek(file, 0, SEEK_SET) != 0) {
-        perror("Error seeking to start of file");
-        fclose(file);
-        return NULL;
-    }
-
-    // Allocate memory for the code
-    char *code = (char *)malloc(*size + 1);
-    if (!code) {
-        fprintf(stderr, "Memory allocation failed\n");
-        fclose(file);
-        return NULL;
-    }
-
-    // Read the file into memory
-    size_t read_size = fread(code, 1, *size, file);
-    if (read_size != (size_t)*size) {
-        fprintf(stderr, "Error reading file: expected %ld bytes, got %zu\n", 
-                *size, read_size);
-        free(code);
-        fclose(file);
-        return NULL;
-    }
-
-    code[*size] = '\0'; // Null-terminate for safety
-    fclose(file);
-    return code;
-}
-
-/**
- * Finds the matching closing bracket ']' for an opening bracket '['.
- * Returns the position of the matching bracket, or -1 on error.
- */
-static long find_matching_close(Interpreter *interp) {
-    int depth = 1;
-    long pc = interp->pc + 1;
-
-    while (depth > 0 && pc < interp->code_size) {
-        if (interp->code[pc] == '[') {
-            depth++;
-        } else if (interp->code[pc] == ']') {
-            depth--;
-        }
-        if (depth > 0) {
-            pc++;
-        }
-    }
-
-    if (depth != 0) {
-        fprintf(stderr, "Error: Unmatched '[' at position %ld\n", interp->pc);
-        return -1;
-    }
-
-    return pc;
-}
-
-/**
- * Finds the matching opening bracket '[' for a closing bracket ']'.
- * Returns the position of the matching bracket, or -1 on error.
- */
-static long find_matching_open(Interpreter *interp) {
-    int depth = 1;
-    long pc = interp->pc - 1;
-
-    while (depth > 0 && pc >= 0) {
-        if (interp->code[pc] == ']') {
-            depth++;
-        } else if (interp->code[pc] == '[') {
-            depth--;
-        }
-        if (depth > 0) {
-            pc--;
-        }
-    }
-
-    if (depth != 0) {
-        fprintf(stderr, "Error: Unmatched ']' at position %ld\n", interp->pc);
-        return -1;
-    }
-
-    return pc;
-}
-
-/**
- * Checks if the data pointer is within valid bounds.
- * Returns 1 if valid, 0 if out of bounds.
- */
-static int is_ptr_valid(Interpreter *interp) {
-    uint8_t *tape_start = interp->tape;
-    uint8_t *tape_end = interp->tape + TAPE_SIZE;
-    return (interp->ptr >= tape_start && interp->ptr < tape_end);
-}
-
-/**
- * Executes a single Brainfuck instruction.
- * Returns 0 on success, -1 on error.
- */
-static int execute_instruction(Interpreter *interp) {
-    char instruction = interp->code[interp->pc];
-    long jump_pos;
-
-    switch (instruction) {
-        case '>':
-            // Move data pointer to the right
-            interp->ptr++;
-            if (!is_ptr_valid(interp)) {
-                fprintf(stderr, "Error: Data pointer out of bounds (moved beyond tape)\n");
-                return -1;
-            }
-            break;
-
-        case '<':
-            // Move data pointer to the left
-            interp->ptr--;
-            if (!is_ptr_valid(interp)) {
-                fprintf(stderr, "Error: Data pointer out of bounds (moved before tape start)\n");
-                return -1;
-            }
-            break;
-
-        case '+':
-            // Increment the byte at the data pointer (wraps around at 255)
-            (*interp->ptr)++;
-            break;
-
-        case '-':
-            // Decrement the byte at the data pointer (wraps around at 0)
-            (*interp->ptr)--;
-            break;
-
-        case '.':
-            // Output the byte at the data pointer as an ASCII character
-            putchar(*interp->ptr);
-            fflush(stdout); // Ensure output is flushed
-            break;
-
-        case ',':
-            // Input a byte and store it at the data pointer
-            {
-                int c = getchar();
-                if (c != EOF) {
-                    *interp->ptr = (uint8_t)c;
-                } else {
-                    // On EOF, set cell to 0 (common Brainfuck convention)
-                    *interp->ptr = 0;
-                }
-            }
-            break;
-
-        case '[':
-            // Jump forward past the matching ']' if the byte at the data pointer is zero
-            if (*interp->ptr == 0) {
-                jump_pos = find_matching_close(interp);
-                if (jump_pos == -1) {
-                    return -1;
-                }
-                interp->pc = jump_pos;
-            }
-            break;
-
-        case ']':
-            // Jump backward to the matching '[' if the byte at the data pointer is nonzero
-            if (*interp->ptr != 0) {
-                jump_pos = find_matching_open(interp);
-                if (jump_pos == -1) {
-                    return -1;
-                }
-                interp->pc = jump_pos;
-            }
-            break;
-
-        default:
-            // Ignore any non-command characters (treat as comments)
-            break;
-    }
-
-    return 0;
-}
-
-/**
- * Initializes a new Brainfuck interpreter.
- * Returns 0 on success, -1 on error.
- */
-static int init_interpreter(Interpreter *interp, char *code, long code_size) {
-    interp->tape = (uint8_t *)calloc(TAPE_SIZE, sizeof(uint8_t));
-    if (!interp->tape) {
-        fprintf(stderr, "Memory allocation failed for tape\n");
-        return -1;
-    }
-
-    interp->ptr = interp->tape;
-    interp->code = code;
-    interp->code_size = code_size;
-    interp->pc = 0;
-
-    return 0;
-}
-
-/**
- * Runs the Brainfuck program.
- * Returns 0 on success, -1 on error.
- */
-static int run_program(Interpreter *interp) {
-    while (interp->pc < interp->code_size) {
-        if (execute_instruction(interp) != 0) {
-            return -1;
-        }
-        interp->pc++;
-    }
-
-    return 0;
-}
-
-/**
- * Cleans up interpreter resources.
- */
-static void cleanup_interpreter(Interpreter *interp) {
-    if (interp->tape) {
-        free(interp->tape);
-    }
-}
-
-int main(int argc, char *argv[]) {
-    // Check for correct usage
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <filename>\n", argv[0]);
-        fprintf(stderr, "Example: %s tests/hello.bf\n", argv[0]);
-        return 1;
-    }
-
-    // Read the Brainfuck source file
-    long code_size;
-    char *code = read_file(argv[1], &code_size);
-    if (!code) {
-        return 1;
-    }
-
-    // Initialize interpreter
-    Interpreter interp;
-    if (init_interpreter(&interp, code, code_size) != 0) {
-        free(code);
-        return 1;
-    }
-
-    // Execute the program
-    int result = run_program(&interp);
-
-    // Clean up
-    cleanup_interpreter(&interp);
-    free(code);
-
-    return (result == 0) ? 0 : 1;
-}
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <stdint.h>
+ #include <string.h>
+ 
+ #ifdef BFNET
+ #include <sys/socket.h>
+ #include <netinet/in.h>
+ #include <netinet/tcp.h>
+ #include <arpa/inet.h>
+ #include <unistd.h>
+ #include <errno.h>
+ #include <sys/select.h>
+ #include <fcntl.h>
+ #endif
+ 
+ #define TAPE_SIZE 30000
+ 
+ #ifdef BFNET
+ int net_mode = 0;        // 0 = console, 1 = network
+ int server_fd = -1;
+ int client_fd = -1;
+ #endif
+ 
+ typedef struct {
+     uint8_t *tape;
+     uint8_t *ptr;
+     char *code;
+     long code_size;
+     long pc;
+ } Interpreter;
+ 
+ static char *read_file(const char *filename, long *size) {
+     FILE *file = fopen(filename, "rb");
+     if (!file) {
+         perror("Error opening file");
+         return NULL;
+     }
+     fseek(file, 0, SEEK_END);
+     *size = ftell(file);
+     fseek(file, 0, SEEK_SET);
+ 
+     char *code = (char *)malloc(*size + 1);
+     if (!code) return NULL;
+ 
+     if (fread(code, 1, *size, file) != (size_t)*size) {
+         free(code);
+         fclose(file);
+         return NULL;
+     }
+     code[*size] = '\0';
+     fclose(file);
+     return code;
+ }
+ 
+ static long find_match(Interpreter *interp, char open, char close, int dir) {
+     int depth = 1;
+     long pc = interp->pc + dir;
+     while (depth > 0 && pc >= 0 && pc < interp->code_size) {
+         if (interp->code[pc] == open) depth++;
+         else if (interp->code[pc] == close) depth--;
+         if (depth > 0) pc += dir;
+     }
+     return (depth == 0) ? pc : -1;
+ }
+ 
+ static int execute_instruction(Interpreter *interp) {
+     char instruction = interp->code[interp->pc];
+     long jump_pos;
+ 
+     switch (instruction) {
+         case '>':
+             if (interp->ptr < interp->tape + TAPE_SIZE - 1) interp->ptr++;
+             break;
+         case '<':
+             if (interp->ptr > interp->tape) interp->ptr--;
+             break;
+         case '+': (*interp->ptr)++; break;
+         case '-': (*interp->ptr)--; break;
+         case '.':
+ #ifdef BFNET
+             if (net_mode == 1 && client_fd != -1) {
+                 send(client_fd, interp->ptr, 1, 0);
+             } else {
+                 putchar(*interp->ptr);
+                 fflush(stdout);
+             }
+ #else
+             putchar(*interp->ptr);
+             fflush(stdout);
+ #endif
+             break;
+         case ',':
+ #ifdef BFNET
+             if (net_mode == 1) {
+                 if (client_fd != -1) {
+                     // Blocking receive
+                     // If connection closes or error, we set cell to 0
+                     int n = recv(client_fd, interp->ptr, 1, MSG_WAITALL);
+                     if (n <= 0) *interp->ptr = 0; 
+                 } else {
+                     *interp->ptr = 0;
+                 }
+             } else {
+                 int c = getchar();
+                 *interp->ptr = (c == EOF) ? 0 : (uint8_t)c;
+             }
+ #else
+             int c = getchar();
+             *interp->ptr = (c == EOF) ? 0 : (uint8_t)c;
+ #endif
+             break;
+         case '[':
+             if (*interp->ptr == 0) {
+                 jump_pos = find_match(interp, '[', ']', 1);
+                 if (jump_pos == -1) return -1;
+                 interp->pc = jump_pos;
+             }
+             break;
+         case ']':
+             if (*interp->ptr != 0) {
+                 jump_pos = find_match(interp, ']', '[', -1);
+                 if (jump_pos == -1) return -1;
+                 interp->pc = jump_pos;
+             }
+             break;
+ #ifdef BFNET
+         case '^': {
+             int port = (*interp->ptr) * 100;
+             server_fd = socket(AF_INET, SOCK_STREAM, 0);
+             
+             int opt = 1;
+             setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+ 
+             struct sockaddr_in addr = {0};
+             addr.sin_family = AF_INET;
+             addr.sin_port = htons(port);
+             addr.sin_addr.s_addr = INADDR_ANY;
+ 
+             if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+                 perror("Bind failed");
+                 *interp->ptr = 0; // Signal failure
+             } else {
+                 listen(server_fd, 1);
+                 printf("Listening on port %d...\n", port);
+                 client_fd = accept(server_fd, NULL, NULL);
+                 printf("Client connected!\n");
+             }
+             break;
+         }
+         case '%':
+             net_mode = !net_mode;
+             break;
+         case '!': {
+             if (client_fd == -1) { *interp->ptr = 0; break; }
+             unsigned char c;
+             int n = recv(client_fd, &c, 1, MSG_DONTWAIT | MSG_PEEK);
+             if (n > 0) *interp->ptr = c;
+             else *interp->ptr = 0;
+             break;
+         }
+ #endif
+     }
+     return 0;
+ }
+ 
+ int main(int argc, char *argv[]) {
+     if (argc != 2) {
+         fprintf(stderr, "Usage: %s <filename.bf>\n", argv[0]);
+         return 1;
+     }
+ 
+     long size;
+     char *code = read_file(argv[1], &size);
+     if (!code) return 1;
+ 
+     Interpreter interp = {0};
+     interp.tape = (uint8_t *)calloc(TAPE_SIZE, 1);
+     interp.ptr = interp.tape;
+     interp.code = code;
+     interp.code_size = size;
+ 
+     while (interp.pc < interp.code_size) {
+         if (execute_instruction(&interp) != 0) break;
+         interp.pc++;
+     }
+ 
+     if (interp.tape) free(interp.tape);
+     free(code);
+     #ifdef BFNET
+     if (client_fd != -1) close(client_fd);
+     if (server_fd != -1) close(server_fd);
+     #endif
+     return 0;
+ }

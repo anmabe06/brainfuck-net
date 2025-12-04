@@ -1,16 +1,1 @@
- O
-O
- o  \``/
-    /o `))
-   /_/\_ss))
-       |_ss))/|
-      |__ss))_|
-     |__sss))_|
-     |___ss))\|
-      |_ss))
-       )_s))
- (`(  /_s))
-  (_\/_s))
-   (\/))
-
-[Credit: https://www.asciiart.eu/animals/fish]
+"Welcome to the Brain-FuckED Chat Server!"

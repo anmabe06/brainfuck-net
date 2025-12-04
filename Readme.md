@@ -8,6 +8,7 @@ A simple and efficient Brainfuck interpreter written in C. This project is part 
 - [Building](#building)
 - [Usage](#usage)
   - [Brainfuck Interpreter (cbf)](#brainfuck-interpreter-cbf)
+  - [Brainfuck-Net Network Extension](#brainfuck-net-network-extension)
   - [Text-to-Brainfuck Encoder (encoder)](#text-to-brainfuck-encoder-encoder)
 - [Brainfuck Language Specification](#brainfuck-language-specification)
   - [Execution Model](#execution-model)
@@ -31,6 +32,7 @@ This project includes two main tools:
 
 ## Features
 - **Standard Brainfuck Implementation**: Implements all 8 Brainfuck commands correctly
+- **Brainfuck-Net Extension**: Network support for building server/client applications (compile with `-DBFNET`)
 - **Bounds Checking**: Prevents data pointer from going out of bounds
 - **Error Handling**: Comprehensive error messages for common issues
 - **Modular Design**: Well-organized code with clear separation of concerns
@@ -42,7 +44,8 @@ This project includes two main tools:
 The project uses a simple Makefile for building:
 
 ```bash
-make              # Build both cbf and encoder executables
+make              # Build both cbf and encoder executables (standard Brainfuck)
+make net          # Build cbf with Brainfuck-Net network support
 make clean        # Remove built artifacts
 make test         # Run test suite
 ```
@@ -51,6 +54,8 @@ Both tools are compiled with:
 - C11 standard
 - `-Wall -Wextra` for comprehensive warnings
 - `-O2` for optimization
+
+**Note**: To use network features, you must build with `make net` which compiles with the `-DBFNET` flag.
 
 
 ## Usage
@@ -61,9 +66,67 @@ Both tools are compiled with:
 
 **Example:**
 ```bash
-./cbf tests/hello.bf
+./cbf tests/hello_world.bf
 # Output: Hello, World!
 ```
+
+### Brainfuck-Net Network Extension
+
+When compiled with `make net`, the interpreter supports network operations through three additional commands:
+
+| Command | Description |
+|---------|-------------|
+| `^` | **Server Hook**: Creates a TCP server and accepts a connection. Port = [Current Cell Value] × 100 (e.g., cell value 80 → port 8000) |
+| `%` | **Stream Toggle**: Toggles I/O mode between console (default) and network. When in network mode, `.` sends to socket and `,` reads from socket |
+| `!` | **Async I/O Poll**: Non-blocking peek at network socket. Sets current cell to the next available byte, or 0 if no data available |
+
+**Network Mode Behavior:**
+- When network mode is **off** (default): `.` outputs to stdout, `,` reads from stdin
+- When network mode is **on**: `.` sends bytes to the connected client, `,` receives bytes from the client
+- If a connection closes or read fails, `,` sets the current cell to 0
+
+**Example: Echo Server**
+
+Create a simple echo server that listens on port 8000:
+
+```bash
+# Build with network support
+make net
+
+# Run the echo server
+./cbf tests/echo_server.bf
+# Output: Listening on port 8000...
+#         Client connected!
+```
+
+The server will echo back any data sent to it. You can test it using the provided Python client:
+
+```bash
+# In another terminal
+python3 client.py
+```
+
+**Example: Building a Server**
+
+Here's how to create a server in Brainfuck:
+
+```brainfuck
+[-]                 Clear Cell 0
+>++++++++           Cell 1 = 8
+[<++++++++++>-]     Cell 0 = 80 (8 * 10)
+<                   Move back to Cell 0 (Value 80)
+^                   Start Server on Port 8000
+%                   Switch to Network Mode
+
+>                   Move to Cell 1
++                   Set Cell 1 to 1 to enter the loop initially
+[                   MAIN LOOP
+    ,               Read byte from socket (Waits for data)
+    .               Echo byte back to socket
+]                   If read failed (connection closed), cell is 0, loop exits
+```
+
+See `tests/echo_server.bf` for a complete working example.
 
 ### Text-to-Brainfuck Encoder (encoder)
 ```bash
@@ -141,14 +204,34 @@ The project includes test files in the `tests/` directory:
 
 - `hello_world.bf`: Classic "Hello, World!" program
 - `ascii_[animal].bf`: ASCII art demonstration
+- `echo_server.bf`: Network echo server example (requires `make net`)
 
 Run tests with:
 ```bash
 ./cbf [filepath].bf
 ```
 
+**Testing Network Features:**
+
+1. Build with network support:
+   ```bash
+   make net
+   ```
+
+2. Start the echo server:
+   ```bash
+   ./cbf tests/echo_server.bf
+   ```
+
+3. In another terminal, connect using the Python client:
+   ```bash
+   python3 client.py
+   ```
+
+The client will connect to `localhost:8000` and allow you to send messages that the server will echo back.
+
 ## Project Goals
-This interpreter is the foundation for building a network chat application in Brainfuck. See `braindump.md` for detailed discussion of the challenges and approaches for implementing network communication in Brainfuck.
+This interpreter is the foundation for building a network chat application in Brainfuck. The Brainfuck-Net extension adds minimal network primitives (`^`, `%`, `!`) that enable server/client applications while maintaining Brainfuck's minimalist philosophy. See `braindump.md` for detailed discussion of the challenges and approaches for implementing network communication in Brainfuck.
 
 
 ## Code Quality
