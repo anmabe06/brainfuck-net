@@ -24,15 +24,18 @@ A simple and efficient Brainfuck interpreter written in C. This project is part 
 
 
 ## Overview
-This project includes two main tools:
+This project includes two main tools and great code example:
 
-- **`cbf`**: A standard-compliant Brainfuck interpreter that executes Brainfuck programs with proper error handling, bounds checking, and a clean, modular codebase.
+- **`cbf`**: A Custom Brainfuck Interpreter that executes Brainfuck programs with proper error handling, bounds checking, and a clean, modular codebase. It is custom, because it enables the execution of programs written in Brainfuck-net (see below).
 - **`encoder`**: A utility that converts text files into Brainfuck code, generating programs that print the exact contents of the input file.
+- **`examples`** for simple ascii-producing programs, echo server-client scripts, and scripts to create a 1:1 chatroom
 
 
 ## Features
 - **Standard Brainfuck Implementation**: Implements all 8 Brainfuck commands correctly
 - **Brainfuck-Net Extension**: Network support for building server/client applications (compile with `-DBFNET`)
+- **Debug Logging**: Optional detailed logging with `--logging` flag (Brainfuck-Net only)
+- **Timestamped Logs**: Optional timestamps in log messages with `--timestamps` flag (Brainfuck-Net only)
 - **Bounds Checking**: Prevents data pointer from going out of bounds
 - **Error Handling**: Comprehensive error messages for common issues
 - **Modular Design**: Well-organized code with clear separation of concerns
@@ -61,29 +64,51 @@ Both tools are compiled with:
 ## Usage
 ### Brainfuck Interpreter (cbf)
 ```bash
-./cbf <filename.bf>
+./cbf [--logging] [--timestamps] <filename.bf>
 ```
+
+**Command-line Options:**
+- `--logging`: (Brainfuck-Net only) Enables detailed logging output to stderr, including debug, info, and network messages
+- `--timestamps`: (Brainfuck-Net only) Adds timestamps to log messages when used with `--logging`
+- `<filename.bf>`: The Brainfuck program file to execute
+
+**Note:** The `--logging` and `--timestamps` flags are only available when the interpreter is compiled with `make net` (Brainfuck-Net extension).
 
 **Example:**
 ```bash
-./cbf tests/hello_world.bf
+# Basic usage
+./cbf tests/simple/hello_world.bf
 # Output: Hello, World!
+
+# With logging (Brainfuck-Net only)
+./cbf --logging tests/simple/hello_world.bf
+
+# With logging and timestamps (Brainfuck-Net only)
+./cbf --logging --timestamps tests/simple/hello_world.bf
 ```
 
 ### Brainfuck-Net Network Extension
 
-When compiled with `make net`, the interpreter supports network operations through three additional commands:
+When compiled with `make net`, the interpreter supports network operations through four additional commands:
 
 | Command | Description |
 |---------|-------------|
-| `^` | **Server Hook**: Creates a TCP server and accepts a connection. Port = [Current Cell Value] × 100 (e.g., cell value 80 → port 8000) |
-| `%` | **Stream Toggle**: Toggles I/O mode between console (default) and network. When in network mode, `.` sends to socket and `,` reads from socket |
-| `!` | **Async I/O Poll**: Non-blocking peek at network socket. Sets current cell to the next available byte, or 0 if no data available |
+| `^` | **Server Hook**: Starts a TCP server listening on a port defined by the current cell value. The port is calculated as: `port = current_cell * 100` (e.g., cell value 80 → port 8000) |
+| `&` | **Client Hook**: Connects to a TCP server. The port is calculated the same way: `port = current_cell * 100` |
+| `%` | **Stream Toggle**: Toggles I/O mode between **Console** (default) and **Network**. When in network mode, `.` sends to socket and `,` reads from socket |
+| `!` | **Async Peek**: Non-blocking read from socket. Writes incoming byte to current cell if available, otherwise writes `0` |
 
-**Network Mode Behavior:**
-- When network mode is **off** (default): `.` outputs to stdout, `,` reads from stdin
-- When network mode is **on**: `.` sends bytes to the connected client, `,` receives bytes from the client
-- If a connection closes or read fails, `,` sets the current cell to 0
+**Mode-Based I/O:**
+
+The extension changes how the standard Brainfuck I/O commands work depending on the network mode (toggled via `%`):
+
+**Console Mode (default):**
+- **`.` (output)**: Writes the current cell value to **stdout**
+- **`,` (input)**: Reads a character from **stdin**. If EOF occurs, the cell is set to `0`
+
+**Network Mode:**
+- **`.` (output)**: Sends the current cell byte to the connected TCP socket. `TCP_NODELAY` is enabled to remove buffering latency
+- **`,` (input)**: Reads a byte from the socket (blocking unless using `!`). If the connection closes or errors, the cell becomes `0`
 
 **Example: Echo Server**
 
@@ -93,17 +118,23 @@ Create a simple echo server that listens on port 8000:
 # Build with network support
 make net
 
-# Run the echo server
-./cbf tests/echo_server.bf
-# Output: Listening on port 8000...
-#         Client connected!
+# Run the echo server with logging enabled
+./cbf --logging tests/echo_server/echo_server.bf
+# Output: [INFO] Brainfuck-Net Interpreter starting...
+#         [INFO] Loaded Brainfuck program: ./tests/echo_server/echo_server.bf (558 bytes)
+#         [DEBUG] Interpreter initialized: tape_size=30000, code_size=558
+#         [INFO] SERVER: Initializing server on port 8000 (cell value: 80)
+#         [DEBUG] Socket created: fd=3
+#         [INFO] Bound to 0.0.0.0:8000
+#         [INFO] Listening for connections (backlog=1)...
+#         [DEBUG] Waiting for client to connect (blocking accept)
 ```
 
-The server will echo back any data sent to it. You can test it using the provided Python client:
+The server will echo back any data sent to it. You can test it using the provided Brainfuck client:
 
 ```bash
-# In another terminal
-python3 client.py
+# In another terminal (with logging to see network activity)
+./cbf --logging tests/echo_server/echo_client.bf
 ```
 
 **Example: Building a Server**
@@ -126,7 +157,32 @@ Here's how to create a server in Brainfuck:
 ]                   If read failed (connection closed), cell is 0, loop exits
 ```
 
-See `tests/echo_server.bf` for a complete working example.
+See `tests/echo_server/echo_server.bf` for a complete working example.
+
+**Example: Building a Client**
+
+Here's how to create a client in Brainfuck:
+
+```brainfuck
+[-]                 Clear Cell 0
+>++++++++           Cell 1 = 8
+[<++++++++++>-]     Cell 0 = 80 (8 * 10)
+<                   Move back to Cell 0 (Value 80)
+&                   Connect to Server on Port 8000
+%                   Switch to Network Mode
+
+>                   Move to Cell 1
+[                   MAIN LOOP
+    ,               Read byte from stdin
+    .               Send byte to server
+    ,               Read response from server
+    %               Switch to Console Mode
+    .               Print response to stdout
+    %               Switch back to Network Mode
+]
+```
+
+See `tests/echo_server/echo_client.bf` for a complete working example.
 
 ### Text-to-Brainfuck Encoder (encoder)
 ```bash
@@ -202,9 +258,12 @@ The interpreter provides clear error messages for:
 ## Testing
 The project includes test files in the `tests/` directory:
 
-- `hello_world.bf`: Classic "Hello, World!" program
-- `ascii_[animal].bf`: ASCII art demonstration
-- `echo_server.bf`: Network echo server example (requires `make net`)
+- `simple/hello_world.bf`: Classic "Hello, World!" program
+- `simple/test_input.bf`: Input handling demonstration
+- `ascii/*.bf`: ASCII art demonstrations
+- `echo_server/echo_server.bf`: Network echo server example (requires `make net`)
+- `echo_server/echo_client.bf`: Network echo client example (requires `make net`)
+- `chatroom/*.bf`: Multi-peer chatroom examples (requires `make net`)
 
 Run tests with:
 ```bash
@@ -220,18 +279,18 @@ Run tests with:
 
 2. Start the echo server:
    ```bash
-   ./cbf tests/echo_server.bf
+   ./cbf --logging tests/echo_server/echo_server.bf
    ```
 
-3. In another terminal, connect using the Python client:
+3. In another terminal, connect using the Brainfuck client:
    ```bash
-   python3 client.py
+   ./cbf --logging tests/echo_server/echo_client.bf
    ```
 
 The client will connect to `localhost:8000` and allow you to send messages that the server will echo back.
 
 ## Project Goals
-This interpreter is the foundation for building a network chat application in Brainfuck. The Brainfuck-Net extension adds minimal network primitives (`^`, `%`, `!`) that enable server/client applications while maintaining Brainfuck's minimalist philosophy. See `braindump.md` for detailed discussion of the challenges and approaches for implementing network communication in Brainfuck.
+This interpreter is the foundation for building a network chat application in Brainfuck. The Brainfuck-Net extension adds minimal network primitives (`^`, `&`, `%`, `!`) that enable server/client applications while maintaining Brainfuck's minimalist philosophy. The extension works by overloading the standard I/O commands (`.` and `,`) depending on a mode flag, allowing seamless switching between console and network I/O. See `braindump.md` for detailed discussion of the challenges and approaches for implementing network communication in Brainfuck.
 
 
 ## Code Quality
