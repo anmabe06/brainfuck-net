@@ -75,3 +75,6 @@ compile_commands.json
 
 # Python files are ignored, since they only used for testing.
 *.py
+
+# We also ignore the executable, since it is custom to each computer architecture.
+cbf
