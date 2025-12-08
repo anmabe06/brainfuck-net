@@ -96,7 +96,6 @@ When compiled with `make net`, the interpreter supports network operations throu
 | `^` | **Server Hook**: Starts a TCP server listening on a port defined by the current cell value. The port is calculated as: `port = current_cell * 100` (e.g., cell value 80 → port 8000) |
 | `&` | **Client Hook**: Connects to a TCP server. The port is calculated the same way: `port = current_cell * 100` |
 | `%` | **Stream Toggle**: Toggles I/O mode between **Console** (default) and **Network**. When in network mode, `.` sends to socket and `,` reads from socket |
-| `!` | **Async Peek**: Non-blocking read from socket. Writes incoming byte to current cell if available, otherwise writes `0` |
 
 **Mode-Based I/O:**
 
@@ -108,7 +107,7 @@ The extension changes how the standard Brainfuck I/O commands work depending on 
 
 **Network Mode:**
 - **`.` (output)**: Sends the current cell byte to the connected TCP socket. `TCP_NODELAY` is enabled to remove buffering latency
-- **`,` (input)**: Reads a byte from the socket (blocking unless using `!`). If the connection closes or errors, the cell becomes `0`
+- **`,` (input)**: Reads a byte from the socket (blocking). If the connection closes or errors, the cell becomes `0`
 
 **Example: Echo Server**
 
@@ -290,7 +289,7 @@ Run tests with:
 The client will connect to `localhost:8000` and allow you to send messages that the server will echo back.
 
 ## Project Goals
-This interpreter is the foundation for building a network chat application in Brainfuck. The Brainfuck-Net extension adds minimal network primitives (`^`, `&`, `%`, `!`) that enable server/client applications while maintaining Brainfuck's minimalist philosophy. The extension works by overloading the standard I/O commands (`.` and `,`) depending on a mode flag, allowing seamless switching between console and network I/O. See `braindump.md` for detailed discussion of the challenges and approaches for implementing network communication in Brainfuck.
+This interpreter is the foundation for building a network chat application in Brainfuck. The Brainfuck-Net extension adds minimal network primitives (`^`, `&`, `%`) that enable server/client applications while maintaining Brainfuck's minimalist philosophy. The extension works by overloading the standard I/O commands (`.` and `,`) depending on a mode flag, allowing seamless switching between console and network I/O. See `braindump.md` for detailed discussion of the challenges and approaches for implementing network communication in Brainfuck.
 
 
 ## Code Quality

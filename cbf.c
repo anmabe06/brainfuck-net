@@ -5,7 +5,6 @@
 * ^ - Server Hook: Creates a TCP server.
 * Port = [Current Cell Value] * 100. (e.g., 80 -> 8000).
 * % - Stream Toggle: Toggles I/O mode between console (default) and network.
-* ! - Async I/O Poll: Peeks at network socket. (Not used in this echo server)
 *
 * Usage:
 * gcc cbf.c -o cbf -DBFNET
@@ -323,30 +322,6 @@ static int execute_instruction(Interpreter *interp) {
             net_mode = !net_mode;
             log_info("Mode switched to: %s (fd=%d)", net_mode ? "NETWORK" : "CONSOLE", client_fd);
             break;
-        case '!': {
-            if (client_fd == -1) {
-                log_debug("Async poll: socket invalid, setting cell to 0");
-                *interp->ptr = 0;
-                break;
-            }
-            unsigned char c;
-            ssize_t n = recv(client_fd, &c, 1, MSG_DONTWAIT | MSG_PEEK);
-            if (n > 0) {
-                *interp->ptr = c;
-                log_debug("Async poll: data available, byte=%d (0x%02x) '%c'", c, c, (c >= 32 && c < 127) ? c : '.');
-            } else if (n == 0) {
-                log_debug("Async poll: connection closed, setting cell to 0");
-                *interp->ptr = 0;
-            } else {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    log_debug("Async poll: no data available (would block)");
-                } else {
-                    log_error("Async poll failed: %s", strerror(errno));
-                }
-                *interp->ptr = 0;
-            }
-            break;
-        }
         #endif
     }
     return 0;
